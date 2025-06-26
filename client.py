@@ -1,7 +1,3 @@
-'''
-Developed by: Frederico Jordan
-Modified for Client-Server PvP play.
-'''
 import pygame
 import chess
 import socket
@@ -125,33 +121,39 @@ def listen_for_server_messages(sock, game, player_state):
     """Check for messages from the server without blocking."""
     try:
         data = sock.recv(2048).decode().strip()
-        if not data: return
+        if not data: return False
         
         parts = data.split(' ', 1)
         command = parts[0].upper()
-        
+        args = parts[1] if len(parts) > 1 else ""
+
         if command == "INFO":
             print(f"Server Info: {parts[1]}")
             set_title(SCREEN_TITLE + f" - {parts[1]}")
-        elif command == "START":
-            color_str, fen = parts[1].split(' ', 1)
-            player_state['color'] = chess.WHITE if color_str == 'white' else chess.BLACK
-            player_state['ongoing'] = True
-            game.load_FEN(fen)
-            print(f"Game started! You are {color_str}.")
-        elif command == "STATE":
-            game.load_FEN(parts[1])
+            return False
+        elif command in ["START", "STATE"]:
+            if command == "START":
+                color_str, fen = args.split(' ', 1)
+                player_state['color'] = chess.WHITE if color_str == 'white' else chess.BLACK
+                player_state['ongoing'] = True
+                game.load_FEN(fen)
+            else:
+                game.load_FEN(args)
+            return True
         elif command == "GAME_END":
             player_state['ongoing'] = False
             set_title(SCREEN_TITLE + f" - {parts[1]}")
             print(f"Game Over: {parts[1]}")
+            return True
 
     except BlockingIOError:
-        pass # No data received, which is normal
-    except (ConnectionResetError, IndexError):
+        return False
+    except (ConnectionResetError, IndexError, ValueError):
         player_state['ongoing'] = False
         set_title(SCREEN_TITLE + " - Connection lost")
         print("Lost connection to the server.")
+        return True
+    return False
 
 def paint_highlight(square_str):
     color = (20, 80, 20, 100) 
@@ -179,6 +181,7 @@ def play_game():
     game = chess.Game()
     player_state = {'color': None, 'ongoing': False}
     highlighted_squares = []
+    redraw_needed = True
 
     run = True
     leaving_square = None
@@ -189,23 +192,8 @@ def play_game():
     while run:
         CLOCK.tick(CLOCK_TICK)
 
-        listen_for_server_messages(sock, game, player_state)
-
-        if player_state['ongoing']:
-            is_my_turn = (game.to_move == player_state['color'])
-            color_name = "White" if player_state['color'] == chess.WHITE else "Black"
-            if is_my_turn:
-                set_title(f"Your turn (Playing as {color_name})")
-            else:
-                set_title(f"Waiting for Opponent To Move... (Playing as {color_name})")
-
-        if player_state['color'] is not None:
-            print_board(game.board, player_state['color'])
-
-        for square in highlighted_squares:
-            paint_highlight(square)
-
-        pygame.display.flip()
+        if listen_for_server_messages(sock, game, player_state):
+            redraw_needed = True
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -227,20 +215,20 @@ def play_game():
                             highlighted_squares.append(dest_square_str)
                 else:
                     leaving_square = None
+                redraw_needed = True
 
 
-            if is_my_turn and leaving_square and event.type == pygame.MOUSEBUTTONUP:
-                arriving_square = coord2str(event.pos, player_state['color'])
-                
-                if arriving_square in highlighted_squares:
-                    move_str = f"{leaving_square}{arriving_square}"
-                    try:
-                        sock.sendall(f"MOVE {move_str}\r\n".encode())
-                    except socket.error:
-                        print("Failed to send move. Connection may be closed.")
-                        run = False
-                leaving_square = None
-                highlighted_squares = []
+            elif event.type == pygame.MOUSEBUTTONUP and leaving_square:
+                    arriving_square = coord2str(event.pos, player_state['color'])
+                    if arriving_square in highlighted_squares:
+                        move_str = f"{leaving_square}{arriving_square}"
+                        try:
+                            sock.sendall(f"MOVE {move_str}\r\n".encode())
+                        except socket.error:
+                            run = False
+                    leaving_square = None
+                    highlighted_squares = []
+                    redraw_needed = True
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 run = False
@@ -248,6 +236,26 @@ def play_game():
             if event.type == pygame.VIDEORESIZE:
                 new_size = min(event.w, event.h)
                 resize_screen(int(new_size / 8.0))
+                redraw_needed = True
+        
+        if redraw_needed:
+            if player_state['ongoing']:
+                my_color_name = "White" if player_state['color'] == chess.WHITE else "Black"
+                if game.to_move == player_state['color']:
+                    title = f"{SCREEN_TITLE} - Your Turn (Playing as {my_color_name})"
+                else:
+                    title = f"{SCREEN_TITLE} - Waiting for Opponent (Playing as {my_color_name})"
+                if chess.is_check(game.board, game.to_move):
+                    title += " - Check!"
+                set_title(title)
+            
+            if player_state['color'] is not None:
+                print_board(game.board, player_state['color'])
+            for square in highlighted_squares:
+                paint_highlight(square)
+            
+            pygame.display.flip()
+            redraw_needed = False
 
     if sock:
         sock.close()
