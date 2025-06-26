@@ -5,16 +5,13 @@ import sys
 from random import choice
 from copy import deepcopy
 
-# --- Network Settings ---
-SERVER_HOST = 'localhost' # Change to server's IP if not running locally
+SERVER_HOST = 'localhost'
 SERVER_PORT = 8889
 sock = None
 
-# --- Pygame and Chess constants ---
 pygame.init()
 
 SQUARE_SIDE = 60
-# (Image loading and color constants are the same as before)
 RED_CHECK          = (240, 150, 150)
 WHITE              = (255, 255, 255)
 BLUE_LIGHT         = (140, 184, 219)
@@ -59,7 +56,6 @@ SCREEN_TITLE = 'Network PvP Chess'
 pygame.display.set_icon(pygame.image.load('images/chess_icon.ico'))
 pygame.display.set_caption(SCREEN_TITLE)
 
-# --- GUI Functions (identical to the previous client example) ---
 def resize_screen(square_side_len):
     global SQUARE_SIDE, SCREEN
     SQUARE_SIDE = square_side_len
@@ -80,13 +76,27 @@ def get_square_rect(square):
     row = 7 - chess.RANKS.index(square[1])
     return pygame.Rect((col * SQUARE_SIDE, row * SQUARE_SIDE), (SQUARE_SIDE, SQUARE_SIDE))
 
-def coord2str(position, pov_color=chess.WHITE):
-    file_index = int(position[0] / SQUARE_SIDE)
-    rank_index = 7 - int(position[1] / SQUARE_SIDE)
+def get_square_from_pos(pos, pov_color=chess.WHITE):
+    file_idx = int(pos[0] / SQUARE_SIDE)
+    rank_idx = 7 - int(pos[1] / SQUARE_SIDE)
+
     if pov_color == chess.BLACK:
-        file_index = 7 - file_index
-        rank_index = 7 - rank_index
-    return chess.FILES[file_index] + chess.RANKS[rank_index]
+        file_idx = 7 - file_idx
+        rank_idx = 7 - rank_idx
+
+    if 0 <= file_idx < 8 and 0 <= rank_idx < 8:
+        return chess.FILES[file_idx] + chess.RANKS[rank_idx]
+    return None
+
+def get_pos_from_square(square_str, pov_color=chess.WHITE):
+    file_idx = chess.FILES.index(square_str[0])
+    rank_idx = chess.RANKS.index(square_str[1])
+
+    if pov_color == chess.BLACK:
+        file_idx = 7 - file_idx
+        rank_idx = 7 - rank_idx
+    
+    return (file_idx * SQUARE_SIDE, (7 - rank_idx) * SQUARE_SIDE)
 
 def print_board(board, pov_color=chess.WHITE):
     display_board = board if pov_color == chess.WHITE else chess.rotate_board(board)
@@ -116,9 +126,7 @@ def print_board(board, pov_color=chess.WHITE):
 def set_title(title):
     pygame.display.set_caption(title)
 
-# --- Network and Game Loop ---
 def listen_for_server_messages(sock, game, player_state):
-    """Check for messages from the server without blocking."""
     try:
         data = sock.recv(2048).decode().strip()
         if not data: return False
@@ -155,17 +163,20 @@ def listen_for_server_messages(sock, game, player_state):
         return True
     return False
 
-def paint_highlight(square_str):
-    color = (20, 80, 20, 100) 
+def paint_highlight(square_str, pov_color):
+    color = (128, 128, 128, 150) 
     
-    center_x = chess.FILES.index(square_str[0]) * SQUARE_SIDE + SQUARE_SIDE // 2
-    center_y = (7 - chess.RANKS.index(square_str[1])) * SQUARE_SIDE + SQUARE_SIDE // 2
-    radius = SQUARE_SIDE // 5
+    top_left_pos = get_pos_from_square(square_str, pov_color)
+    
+    center_x = top_left_pos[0] + SQUARE_SIDE // 2
+    center_y = top_left_pos[1] + SQUARE_SIDE // 2
+    radius = SQUARE_SIDE // 6
 
     target_rect = pygame.Rect(center_x - radius, center_y - radius, radius * 2, radius * 2)
     shape_surf = pygame.Surface(target_rect.size, pygame.SRCALPHA)
     pygame.draw.circle(shape_surf, color, (radius, radius), radius)
     SCREEN.blit(shape_surf, target_rect)
+
 
 def play_game():
     global sock
@@ -201,31 +212,31 @@ def play_game():
 
             is_my_turn = player_state['ongoing'] and (game.to_move == player_state['color'])
 
-            if is_my_turn and event.type == pygame.MOUSEBUTTONDOWN:
-                highlighted_squares = []
-                leaving_square = coord2str(event.pos, player_state['color'])
-                
-                piece_bb = chess.str2bb(leaving_square)
-                piece = chess.get_piece(game.board, piece_bb)
-                
-                if piece != chess.EMPTY and (piece & chess.COLOR_MASK) == player_state['color']:
-                    for move in chess.legal_moves(game, player_state['color']):
-                        if move[0] == piece_bb:
-                            dest_square_str = chess.bb2str(move[1])
-                            highlighted_squares.append(dest_square_str)
-                else:
-                    leaving_square = None
-                redraw_needed = True
+            if is_my_turn:
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    highlighted_squares = []
+                    clicked_square = get_square_from_pos(event.pos, player_state['color'])
 
+                    if clicked_square:
+                        leaving_square = clicked_square
+                        piece_bb = chess.str2bb(leaving_square)
+                        piece = chess.get_piece(game.board, piece_bb)
+                        if piece != chess.EMPTY and (piece & chess.COLOR_MASK) == player_state['color']:
+                            for move in chess.legal_moves(game, player_state['color']):
+                                if move[0] == piece_bb:
+                                    highlighted_squares.append(chess.bb2str(move[1]))
+                        else:
+                            leaving_square = None
+                    redraw_needed = True
 
-            elif event.type == pygame.MOUSEBUTTONUP and leaving_square:
-                    arriving_square = coord2str(event.pos, player_state['color'])
-                    if arriving_square in highlighted_squares:
+                elif event.type == pygame.MOUSEBUTTONUP and leaving_square:
+                    arriving_square = get_square_from_pos(event.pos, player_state['color'])
+                    
+                    if arriving_square and arriving_square in highlighted_squares:
                         move_str = f"{leaving_square}{arriving_square}"
-                        try:
-                            sock.sendall(f"MOVE {move_str}\r\n".encode())
-                        except socket.error:
-                            run = False
+                        try: sock.sendall(f"MOVE {move_str}\r\n".encode())
+                        except socket.error: run = False
+                        
                     leaving_square = None
                     highlighted_squares = []
                     redraw_needed = True
@@ -252,7 +263,7 @@ def play_game():
             if player_state['color'] is not None:
                 print_board(game.board, player_state['color'])
             for square in highlighted_squares:
-                paint_highlight(square)
+                paint_highlight(square, player_state['color'])
             
             pygame.display.flip()
             redraw_needed = False
