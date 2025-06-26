@@ -153,6 +153,17 @@ def listen_for_server_messages(sock, game, player_state):
         set_title(SCREEN_TITLE + " - Connection lost")
         print("Lost connection to the server.")
 
+def paint_highlight(square_str):
+    color = (20, 80, 20, 100) 
+    
+    center_x = chess.FILES.index(square_str[0]) * SQUARE_SIDE + SQUARE_SIDE // 2
+    center_y = (7 - chess.RANKS.index(square_str[1])) * SQUARE_SIDE + SQUARE_SIDE // 2
+    radius = SQUARE_SIDE // 5
+
+    target_rect = pygame.Rect(center_x - radius, center_y - radius, radius * 2, radius * 2)
+    shape_surf = pygame.Surface(target_rect.size, pygame.SRCALPHA)
+    pygame.draw.circle(shape_surf, color, (radius, radius), radius)
+    SCREEN.blit(shape_surf, target_rect)
 
 def play_game():
     global sock
@@ -167,6 +178,7 @@ def play_game():
 
     game = chess.Game()
     player_state = {'color': None, 'ongoing': False}
+    highlighted_squares = []
 
     run = True
     leaving_square = None
@@ -177,21 +189,23 @@ def play_game():
     while run:
         CLOCK.tick(CLOCK_TICK)
 
-        # Listen for updates from server
         listen_for_server_messages(sock, game, player_state)
 
-        # Update title based on game state
         if player_state['ongoing']:
             is_my_turn = (game.to_move == player_state['color'])
             color_name = "White" if player_state['color'] == chess.WHITE else "Black"
             if is_my_turn:
-                set_title(f"Your turn ({color_name})")
+                set_title(f"Your turn (Playing as {color_name})")
             else:
-                set_title(f"Opponent's turn ({color_name})")
-        
-        # Redraw board every frame to handle server updates
+                set_title(f"Waiting for Opponent To Move... (Playing as {color_name})")
+
         if player_state['color'] is not None:
             print_board(game.board, player_state['color'])
+
+        for square in highlighted_squares:
+            paint_highlight(square)
+
+        pygame.display.flip()
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -200,11 +214,25 @@ def play_game():
             is_my_turn = player_state['ongoing'] and (game.to_move == player_state['color'])
 
             if is_my_turn and event.type == pygame.MOUSEBUTTONDOWN:
+                highlighted_squares = []
                 leaving_square = coord2str(event.pos, player_state['color'])
+                
+                piece_bb = chess.str2bb(leaving_square)
+                piece = chess.get_piece(game.board, piece_bb)
+                
+                if piece != chess.EMPTY and (piece & chess.COLOR_MASK) == player_state['color']:
+                    for move in chess.legal_moves(game, player_state['color']):
+                        if move[0] == piece_bb:
+                            dest_square_str = chess.bb2str(move[1])
+                            highlighted_squares.append(dest_square_str)
+                else:
+                    leaving_square = None
+
 
             if is_my_turn and leaving_square and event.type == pygame.MOUSEBUTTONUP:
                 arriving_square = coord2str(event.pos, player_state['color'])
-                if leaving_square != arriving_square:
+                
+                if arriving_square in highlighted_squares:
                     move_str = f"{leaving_square}{arriving_square}"
                     try:
                         sock.sendall(f"MOVE {move_str}\r\n".encode())
@@ -212,10 +240,11 @@ def play_game():
                         print("Failed to send move. Connection may be closed.")
                         run = False
                 leaving_square = None
+                highlighted_squares = []
 
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 run = False
-
+            
             if event.type == pygame.VIDEORESIZE:
                 new_size = min(event.w, event.h)
                 resize_screen(int(new_size / 8.0))
