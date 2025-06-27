@@ -72,8 +72,18 @@ except pygame.error as e:
     print(f"Error loading images: {e}\nEnsure the 'images' folder is present.")
     sys.exit()
 
+PIECE_IMAGES = {
+    chess.BLACK|chess.KING: BLACK_KING, chess.BLACK|chess.QUEEN: BLACK_QUEEN,
+    chess.BLACK|chess.ROOK: BLACK_ROOK, chess.BLACK|chess.BISHOP: BLACK_BISHOP,
+    chess.BLACK|chess.KNIGHT: BLACK_KNIGHT, chess.BLACK|chess.PAWN: BLACK_PAWN,
+    chess.BLACK|chess.JOKER: BLACK_JOKER, chess.WHITE|chess.JOKER: WHITE_JOKER,
+    chess.WHITE|chess.KING: WHITE_KING, chess.WHITE|chess.QUEEN: WHITE_QUEEN,
+    chess.WHITE|chess.ROOK: WHITE_ROOK, chess.WHITE|chess.BISHOP: WHITE_BISHOP,
+    chess.WHITE|chess.KNIGHT: WHITE_KNIGHT, chess.WHITE|chess.PAWN: WHITE_PAWN,
+}
+
 CLOCK = pygame.time.Clock()
-CLOCK_TICK = 30
+CLOCK_TICK = 60
 SCREEN = pygame.display.set_mode((8 * SQUARE_SIDE, 8 * SQUARE_SIDE), pygame.RESIZABLE)
 SCREEN_TITLE = 'Network PvP Chess'
 pygame.display.set_icon(pygame.image.load('images/chess_icon.ico'))
@@ -132,18 +142,11 @@ def print_board(board, pov_color=chess.WHITE):
         king_pos_bb = chess.get_king(display_board, chess.BLACK)
         paint_square(chess.bb2str(king_pos_bb), RED_CHECK)
 
-    piece_map = {
-        chess.BLACK|chess.KING: BLACK_KING, chess.BLACK|chess.QUEEN: BLACK_QUEEN, chess.BLACK|chess.ROOK: BLACK_ROOK,
-        chess.BLACK|chess.BISHOP: BLACK_BISHOP, chess.BLACK|chess.KNIGHT: BLACK_KNIGHT, chess.BLACK|chess.PAWN: BLACK_PAWN,
-        chess.BLACK|chess.JOKER: BLACK_JOKER,
-        chess.WHITE|chess.KING: WHITE_KING, chess.WHITE|chess.QUEEN: WHITE_QUEEN, chess.WHITE|chess.ROOK: WHITE_ROOK,
-        chess.WHITE|chess.BISHOP: WHITE_BISHOP, chess.WHITE|chess.KNIGHT: WHITE_KNIGHT, chess.WHITE|chess.PAWN: WHITE_PAWN,
-        chess.WHITE|chess.JOKER: WHITE_JOKER,
-    }
     for i in range(64):
         piece_code = display_board[i]
         if piece_code != chess.EMPTY:
-            SCREEN.blit(pygame.transform.scale(piece_map[piece_code], (SQUARE_SIDE, SQUARE_SIDE)), get_square_rect(chess.bb2str(1 << i)))
+            image = PIECE_IMAGES[piece_code]
+            SCREEN.blit(pygame.transform.scale(image, (SQUARE_SIDE, SQUARE_SIDE)), get_square_rect(chess.bb2str(1 << i)))
     pygame.display.flip()
 
 def set_title(title):
@@ -226,11 +229,15 @@ def play_game():
 
     game = chess.Game()
     player_state = {'color': None, 'ongoing': False}
-    highlighted_squares = []
-    redraw_needed = True
 
     run = True
+    redraw_needed = True
+
     leaving_square = None
+    highlighted_squares = []
+    is_dragging = False
+    dragged_piece_img = None
+    dragged_piece_rect = None
 
     print_empty_board()
     pygame.display.flip()
@@ -249,29 +256,32 @@ def play_game():
 
             if is_my_turn:
                 if event.type == pygame.MOUSEBUTTONDOWN:
-                    highlighted_squares = []
                     clicked_square = get_square_from_pos(event.pos, player_state['color'])
-
                     if clicked_square:
-                        leaving_square = clicked_square
-                        piece_bb = chess.str2bb(leaving_square)
-                        piece = chess.get_piece(game.board, piece_bb)
+                        piece = chess.get_piece(game.board, chess.str2bb(clicked_square))
                         if piece != chess.EMPTY and (piece & chess.COLOR_MASK) == player_state['color']:
+                            is_dragging = True
+                            leaving_square = clicked_square
+                            dragged_piece_img = PIECE_IMAGES[piece]
+                            dragged_piece_img = pygame.transform.scale(dragged_piece_img, (SQUARE_SIDE, SQUARE_SIDE))
+                            dragged_piece_rect = dragged_piece_img.get_rect(center=event.pos)
+                            piece_bb = chess.str2bb(leaving_square)
                             for move in chess.legal_moves(game, player_state['color']):
                                 if move[0] == piece_bb:
                                     highlighted_squares.append(chess.bb2str(move[1]))
-                        else:
-                            leaving_square = None
+                            redraw_needed = True
+
+                elif event.type == pygame.MOUSEMOTION and is_dragging:
+                    dragged_piece_rect.center = event.pos
                     redraw_needed = True
 
-                elif event.type == pygame.MOUSEBUTTONUP and leaving_square:
+                elif event.type == pygame.MOUSEBUTTONUP and is_dragging:
+                    is_dragging = False
                     arriving_square = get_square_from_pos(event.pos, player_state['color'])
-                    
                     if arriving_square and arriving_square in highlighted_squares:
                         move_str = f"{leaving_square}{arriving_square}"
                         try: sock.sendall(f"MOVE {move_str}\r\n".encode())
                         except socket.error: run = False
-                        
                     leaving_square = None
                     highlighted_squares = []
                     redraw_needed = True
@@ -306,9 +316,14 @@ def play_game():
                     title += " - Check!"
                 set_title(title)
             
+            board_to_draw = game.board
+            if is_dragging and leaving_square:
+                board_to_draw = list(game.board)
+                board_to_draw[chess.str2index(leaving_square)] = chess.EMPTY
+
             if player_state['color'] is not None:
-                print_board(game.board, player_state['color'])
-                
+                print_board(board_to_draw, player_state['color'])
+
             for square in highlighted_squares:
                 is_capture = chess.get_piece(game.board, chess.str2bb(square)) != chess.EMPTY
                 
@@ -316,7 +331,10 @@ def play_game():
                     paint_ring_highlight(player_state['color'], square)
                 else:
                     paint_dot_highlight(player_state['color'], square)
-            
+
+            if is_dragging:
+                SCREEN.blit(dragged_piece_img, dragged_piece_rect)
+
             pygame.display.flip()
             redraw_needed = False
 
