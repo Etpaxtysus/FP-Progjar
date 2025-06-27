@@ -12,23 +12,46 @@ sock = None
 pygame.init()
 
 SQUARE_SIDE = 60
+
 RED_CHECK          = (240, 150, 150)
 WHITE              = (255, 255, 255)
-BLUE_LIGHT         = (140, 184, 219)
-BLUE_DARK          = (91,  131, 159)
-GRAY_LIGHT         = (240, 240, 240)
-GRAY_DARK          = (200, 200, 200)
-CHESSWEBSITE_LIGHT = (212, 202, 190)
-CHESSWEBSITE_DARK  = (100,  92,  89)
-LICHESS_LIGHT      = (240, 217, 181)
-LICHESS_DARK       = (181, 136,  99)
-LICHESS_GRAY_LIGHT = (164, 164, 164)
-LICHESS_GRAY_DARK  = (136, 136, 136)
 
-BOARD_COLORS = [(GRAY_LIGHT, GRAY_DARK), (BLUE_LIGHT, BLUE_DARK), (WHITE, BLUE_LIGHT),
-                (CHESSWEBSITE_LIGHT, CHESSWEBSITE_DARK), (LICHESS_LIGHT, LICHESS_DARK),
-                (LICHESS_GRAY_LIGHT, LICHESS_GRAY_DARK)]
-BOARD_COLOR = choice(BOARD_COLORS)
+LICHESS_BROWN_LIGHT = (240, 217, 181)
+LICHESS_BROWN_DARK = (181, 136, 99)
+LICHESS_BLUE_LIGHT = (222, 227, 230)
+LICHESS_BLUE_DARK = (140, 162, 173)
+LICHESS_GREEN_LIGHT = (238, 238, 210)
+LICHESS_GREEN_DARK = (118, 150, 86)
+
+CHESSCOM_GREEN_LIGHT = (235, 236, 208)
+CHESSCOM_GREEN_DARK = (119, 149, 86)
+CHESSCOM_BROWN_LIGHT = (232, 235, 239)
+CHESSCOM_BROWN_DARK = (125, 135, 150)
+CHESSCOM_DASH_LIGHT = (205, 210, 106)
+CHESSCOM_DASH_DARK = (170, 162, 58)
+
+WOOD_LIGHT = (234, 209, 168)
+WOOD_DARK = (180, 135, 100)
+
+WALNUT_LIGHT = (235, 215, 180)
+WALNUT_DARK = (160, 110, 75)
+
+OCEAN_BLUE_LIGHT = (200, 220, 240)
+OCEAN_BLUE_DARK = (80, 125, 180)
+
+BOARD_THEMES = [
+    ("Lichess Green", (LICHESS_GREEN_LIGHT, LICHESS_GREEN_DARK)),
+    ("Lichess Blue", (LICHESS_BLUE_LIGHT, LICHESS_BLUE_DARK)),
+    ("Lichess Brown", (LICHESS_BROWN_LIGHT, LICHESS_BROWN_DARK)),
+    ("Chess.com Green", (CHESSCOM_GREEN_LIGHT, CHESSCOM_GREEN_DARK)),
+    ("Chess.com Brown", (CHESSCOM_BROWN_LIGHT, CHESSCOM_BROWN_DARK)),
+    ("Wood", (WOOD_LIGHT, WOOD_DARK)),
+    ("Ocean Blue", (OCEAN_BLUE_LIGHT, OCEAN_BLUE_DARK)),
+    ("Walnut", (WALNUT_LIGHT, WALNUT_DARK)),
+]
+
+CURRENT_THEME_INDEX = choice(range(len(BOARD_THEMES)))
+BOARD_COLOR = BOARD_THEMES[CURRENT_THEME_INDEX][1]
 
 try:
     BLACK_KING   = pygame.image.load('images/black_king.png')
@@ -164,7 +187,7 @@ def listen_for_server_messages(sock, game, player_state):
     return False
 
 def paint_dot_highlight(pov_color, square_str):
-    color = (128, 128, 128, 150)
+    color = (255, 255, 51, 128)
     top_left_pos = get_pos_from_square(square_str, pov_color)
     if top_left_pos is None: return
 
@@ -178,7 +201,7 @@ def paint_dot_highlight(pov_color, square_str):
     SCREEN.blit(shape_surf, target_rect)
 
 def paint_ring_highlight(pov_color, square_str):
-    color = (180, 40, 40, 150)
+    color = (220, 30, 30, 150)
     top_left_pos = get_pos_from_square(square_str, pov_color)
     if top_left_pos is None: return
 
@@ -253,8 +276,19 @@ def play_game():
                     highlighted_squares = []
                     redraw_needed = True
 
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                run = False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    run = False
+
+                if event.key == pygame.K_c:
+                    global BOARD_COLOR, CURRENT_THEME_INDEX
+                    
+                    CURRENT_THEME_INDEX = (CURRENT_THEME_INDEX + 1) % len(BOARD_THEMES)
+                    
+                    theme_name, theme_colors = BOARD_THEMES[CURRENT_THEME_INDEX]
+                    BOARD_COLOR = theme_colors
+                    redraw_needed = True
+                    print(f"Changed theme to: {theme_name}")
             
             if event.type == pygame.VIDEORESIZE:
                 new_size = min(event.w, event.h)
