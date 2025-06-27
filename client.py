@@ -163,11 +163,11 @@ def listen_for_server_messages(sock, game, player_state):
         return True
     return False
 
-def paint_highlight(square_str, pov_color):
-    color = (128, 128, 128, 150) 
-    
+def paint_dot_highlight(pov_color, square_str):
+    color = (128, 128, 128, 150)
     top_left_pos = get_pos_from_square(square_str, pov_color)
-    
+    if top_left_pos is None: return
+
     center_x = top_left_pos[0] + SQUARE_SIDE // 2
     center_y = top_left_pos[1] + SQUARE_SIDE // 2
     radius = SQUARE_SIDE // 6
@@ -177,6 +177,18 @@ def paint_highlight(square_str, pov_color):
     pygame.draw.circle(shape_surf, color, (radius, radius), radius)
     SCREEN.blit(shape_surf, target_rect)
 
+def paint_ring_highlight(pov_color, square_str):
+    color = (180, 40, 40, 150)
+    top_left_pos = get_pos_from_square(square_str, pov_color)
+    if top_left_pos is None: return
+
+    rect = pygame.Rect(top_left_pos[0], top_left_pos[1], SQUARE_SIDE, SQUARE_SIDE)
+    shape_surf = pygame.Surface(rect.size, pygame.SRCALPHA)
+    
+    pygame.draw.circle(shape_surf, color, (SQUARE_SIDE // 2, SQUARE_SIDE // 2), SQUARE_SIDE // 2)
+    pygame.draw.circle(shape_surf, (0, 0, 0, 0), (SQUARE_SIDE // 2, SQUARE_SIDE // 2), SQUARE_SIDE // 2 - (SQUARE_SIDE // 10))
+    
+    SCREEN.blit(shape_surf, rect)
 
 def play_game():
     global sock
@@ -262,8 +274,14 @@ def play_game():
             
             if player_state['color'] is not None:
                 print_board(game.board, player_state['color'])
+                
             for square in highlighted_squares:
-                paint_highlight(square, player_state['color'])
+                is_capture = chess.get_piece(game.board, chess.str2bb(square)) != chess.EMPTY
+                
+                if is_capture:
+                    paint_ring_highlight(player_state['color'], square)
+                else:
+                    paint_dot_highlight(player_state['color'], square)
             
             pygame.display.flip()
             redraw_needed = False
