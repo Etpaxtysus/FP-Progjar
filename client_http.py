@@ -34,7 +34,8 @@ def draw_game_state(s, g, pov, h_sq, d_p, p_img):
     s.fill(BOARD_COLOR['light'])
     for r_idx in range(8):
         for f_idx in range(8):
-            if (r_idx + f_idx) % 2 == 1: dc,dr = get_display_indices(f_idx,r_idx,pov); pygame.draw.rect(s,BOARD_COLOR['dark'],(dc*SQUARE_SIDE,dr*SQUARE_SIDE,SQUARE_SIDE,SQUARE_SIDE))
+            if (r_idx + f_idx) % 2 == 0:
+                dc,dr = get_display_indices(f_idx,r_idx,pov); pygame.draw.rect(s,BOARD_COLOR['dark'],(dc*SQUARE_SIDE,dr*SQUARE_SIDE,SQUARE_SIDE,SQUARE_SIDE))
     for sq in h_sq: paint_highlight(s, sq, HIGHLIGHT_CAPTURE_COLOR if chess.get_piece(g.board,chess.str2bb(sq))!=chess.EMPTY else HIGHLIGHT_MOVE_COLOR, pov)
     b_draw = list(g.board);
     if d_p and d_p['leaving_square']: b_draw[chess.str2index(d_p['leaving_square'])]=chess.EMPTY
