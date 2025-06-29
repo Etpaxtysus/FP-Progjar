@@ -3,7 +3,7 @@ import socket
 import threading
 import logging
 import select
-from http import HttpServer
+from http_chess import HttpServer
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
