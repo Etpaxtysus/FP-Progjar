@@ -4,259 +4,153 @@ import requests
 import sys
 import uuid
 import time
+import threading
+import queue
 from random import choice
 
 pygame.init()
 
-SERVER_URL = 'http://localhost:8889'
+SERVER_URL = 'http://20.222.90.1:8889'
 SQUARE_SIDE = 60
-APP_TITLE = "Network PvP Chess"
-
+APP_TITLE = "Network PvP Chess (Threaded Client)"
 BOARD_THEMES = [
     ("Lichess Green", {'light': (238, 238, 210), 'dark': (118, 150, 86)}),
     ("Lichess Blue", {'light': (222, 227, 230), 'dark': (140, 162, 173)}),
     ("Lichess Brown", {'light': (240, 217, 181), 'dark': (181, 136, 99)}),
-    ("Wood", {'light': (234, 209, 168), 'dark': (180, 135, 100)}),
-    ("Ocean", {'light': (200, 220, 240), 'dark': (80, 125, 180)}),
-    ("Walnut", {'light': (235, 215, 180), 'dark': (160, 110, 75)})
+    ("Wood", {'light': (234, 209, 168), 'dark': (180, 135, 100)})
 ]
 CURRENT_THEME_INDEX = 0
 BOARD_COLOR = BOARD_THEMES[CURRENT_THEME_INDEX][1]
+HIGHLIGHT_MOVE_COLOR, HIGHLIGHT_CAPTURE_COLOR = (20, 80, 120, 100), (170, 0, 0, 120)
 
-RED_CHECK = (240, 150, 150)
-HIGHLIGHT_MOVE_COLOR = (20, 80, 120, 100)
-HIGHLIGHT_CAPTURE_COLOR = (170, 0, 0, 120)
-
-PIECE_IMAGES = {}
-
-def get_display_indices(file_idx, rank_idx, pov_color):
-    if pov_color == chess.WHITE:
-        return file_idx, 7 - rank_idx
-    else:
-        return 7 - file_idx, rank_idx
-
-def coord2str(position, pov_color):
-    col = int(position[0] / SQUARE_SIDE)
-    row = int(position[1] / SQUARE_SIDE)
-    if pov_color == chess.WHITE:
-        file_idx = col
-        rank_idx = 7 - row
-    else:
-        file_idx = 7 - col
-        rank_idx = row
-    if 0 <= file_idx < 8 and 0 <= rank_idx < 8:
-        return chess.FILES[file_idx] + chess.RANKS[rank_idx]
-    return None
-
-def paint_highlight(screen, square_str, color, pov_color):
-    file_idx = chess.FILES.index(square_str[0])
-    rank_idx = chess.RANKS.index(square_str[1])
-    disp_col, disp_row = get_display_indices(file_idx, rank_idx, pov_color)
-    center_x = disp_col * SQUARE_SIDE + SQUARE_SIDE // 2
-    center_y = disp_row * SQUARE_SIDE + SQUARE_SIDE // 2
-    highlight_surface = pygame.Surface((SQUARE_SIDE, SQUARE_SIDE), pygame.SRCALPHA)
-    pygame.draw.circle(highlight_surface, color, (SQUARE_SIDE // 2, SQUARE_SIDE // 2), SQUARE_SIDE // 4)
-    screen.blit(highlight_surface, (disp_col * SQUARE_SIDE, disp_row * SQUARE_SIDE))
-
-def draw_game_state(screen, game_obj, pov_color, highlighted_squares, dragged_piece_info, piece_images_dict):
-    screen.fill(BOARD_COLOR['light'])
-    for rank_idx in range(8):
-        for file_idx in range(8):
-            if (rank_idx + file_idx) % 2 == 0:
-                disp_col, disp_row = get_display_indices(file_idx, rank_idx, pov_color)
-                pygame.draw.rect(screen, BOARD_COLOR['dark'], (disp_col * SQUARE_SIDE, disp_row * SQUARE_SIDE, SQUARE_SIDE, SQUARE_SIDE))
-
-    for square in highlighted_squares:
-        is_capture = chess.get_piece(game_obj.board, chess.str2bb(square)) != chess.EMPTY
-        color = HIGHLIGHT_CAPTURE_COLOR if is_capture else HIGHLIGHT_MOVE_COLOR
-        paint_highlight(screen, square, color, pov_color)
-
-    board_to_draw = list(game_obj.board)
-    if dragged_piece_info and dragged_piece_info['leaving_square']:
-         board_to_draw[chess.str2index(dragged_piece_info['leaving_square'])] = chess.EMPTY
-
+def get_display_indices(f_idx, r_idx, pov): return (f_idx, 7 - r_idx) if pov == chess.WHITE else (7 - f_idx, r_idx)
+def coord2str(pos, pov):
+    col, row = int(pos[0]/SQUARE_SIDE), int(pos[1]/SQUARE_SIDE); f, r = (col, 7-row) if pov==chess.WHITE else (7-col, row)
+    return chess.FILES[f] + chess.RANKS[r] if 0<=f<8 and 0<=r<8 else None
+def paint_highlight(s, sq, c, pov):
+    f,r = chess.FILES.index(sq[0]), chess.RANKS.index(sq[1]); dc,dr = get_display_indices(f,r,pov)
+    hs=pygame.Surface((SQUARE_SIDE,SQUARE_SIDE), pygame.SRCALPHA); pygame.draw.circle(hs,c,(SQUARE_SIDE//2,SQUARE_SIDE//2),SQUARE_SIDE//4); s.blit(hs,(dc*SQUARE_SIDE,dr*SQUARE_SIDE))
+def draw_game_state(s, g, pov, h_sq, d_p, p_img):
+    s.fill(BOARD_COLOR['light'])
+    for r_idx in range(8):
+        for f_idx in range(8):
+            if (r_idx + f_idx) % 2 == 1: dc,dr = get_display_indices(f_idx,r_idx,pov); pygame.draw.rect(s,BOARD_COLOR['dark'],(dc*SQUARE_SIDE,dr*SQUARE_SIDE,SQUARE_SIDE,SQUARE_SIDE))
+    for sq in h_sq: paint_highlight(s, sq, HIGHLIGHT_CAPTURE_COLOR if chess.get_piece(g.board,chess.str2bb(sq))!=chess.EMPTY else HIGHLIGHT_MOVE_COLOR, pov)
+    b_draw = list(g.board);
+    if d_p and d_p['leaving_square']: b_draw[chess.str2index(d_p['leaving_square'])]=chess.EMPTY
     for i in range(64):
-        piece_code = board_to_draw[i]
-        if piece_code != chess.EMPTY and piece_code in piece_images_dict:
-            square_str = chess.bb2str(1 << i)
-            file_idx, rank_idx = chess.FILES.index(square_str[0]), chess.RANKS.index(square_str[1])
-            disp_col, disp_row = get_display_indices(file_idx, rank_idx, pov_color)
-            image = piece_images_dict[piece_code]
-            screen.blit(pygame.transform.scale(image, (SQUARE_SIDE, SQUARE_SIDE)), (disp_col * SQUARE_SIDE, disp_row * SQUARE_SIDE))
+        p = b_draw[i];
+        if p != chess.EMPTY and p in p_img:
+            sq = chess.bb2str(1<<i); f,r = chess.FILES.index(sq[0]), chess.RANKS.index(sq[1]); dc,dr=get_display_indices(f,r,pov)
+            s.blit(pygame.transform.scale(p_img[p],(SQUARE_SIDE,SQUARE_SIDE)),(dc*SQUARE_SIDE,dr*SQUARE_SIDE))
+    if d_p and d_p['image']: s.blit(d_p['image'], d_p['rect'])
+def draw_game_over_overlay(screen, message):
+    overlay_color = (0, 0, 0, 150); overlay = pygame.Surface(screen.get_size(), pygame.SRCALPHA); overlay.fill(overlay_color); screen.blit(overlay, (0, 0))
+    font = pygame.font.Font(None, 40); text_surface = font.render(message, True, (255, 255, 255)); text_rect = text_surface.get_rect(center=screen.get_rect().center); screen.blit(text_surface, text_rect)
 
-    if dragged_piece_info and dragged_piece_info['image']:
-        screen.blit(dragged_piece_info['image'], dragged_piece_info['rect'])
-
-    pygame.display.flip()
+def network_thread_func(requests_q, results_q, stop_event):
+    while not stop_event.is_set():
+        try:
+            task = requests_q.get(timeout=1); action = task.get('action')
+            try:
+                if action == 'join': res = requests.get(f"{SERVER_URL}/api/join_game?player_id={task['player_id']}", timeout=10); results_q.put({'type': 'join_result', 'data': res.json()})
+                elif action == 'poll':
+                    url = f"{SERVER_URL}/api/get_update?game_id={task['game_id']}&player_id={task['player_id']}"
+                    if task.get('fen'): url += f"&fen={task['fen']}";
+                    res = requests.get(url, timeout=30); results_q.put({'type': 'poll_result', 'data': res.json()})
+                elif action == 'move':
+                    url = f"{SERVER_URL}/api/move?game_id={task['game_id']}&player_id={task['player_id']}&move={task['move']}";
+                    res = requests.get(url, timeout=10); results_q.put({'type': 'move_result', 'data': res.json()})
+            except requests.exceptions.RequestException as e: results_q.put({'type': 'error', 'data': e})
+        except queue.Empty: continue
 
 def play_game():
     global SQUARE_SIDE, BOARD_COLOR, CURRENT_THEME_INDEX
-    
-    screen = pygame.display.set_mode((8 * SQUARE_SIDE, 8 * SQUARE_SIDE), pygame.RESIZABLE)
-    pygame.display.set_caption(APP_TITLE)
-    clock = pygame.time.Clock()
-
+    screen = pygame.display.set_mode((8 * SQUARE_SIDE, 8 * SQUARE_SIDE), pygame.RESIZABLE); pygame.display.set_caption(APP_TITLE); clock = pygame.time.Clock()
     try:
-        b_k = pygame.image.load('images/black_king.png').convert_alpha()
-        b_q = pygame.image.load('images/black_queen.png').convert_alpha()
-        b_r = pygame.image.load('images/black_rook.png').convert_alpha()
-        b_b = pygame.image.load('images/black_bishop.png').convert_alpha()
-        b_n = pygame.image.load('images/black_knight.png').convert_alpha()
-        b_p = pygame.image.load('images/black_pawn.png').convert_alpha()
-        w_k = pygame.image.load('images/white_king.png').convert_alpha()
-        w_q = pygame.image.load('images/white_queen.png').convert_alpha()
-        w_r = pygame.image.load('images/white_rook.png').convert_alpha()
-        w_b = pygame.image.load('images/white_bishop.png').convert_alpha()
-        w_n = pygame.image.load('images/white_knight.png').convert_alpha()
-        w_p = pygame.image.load('images/white_pawn.png').convert_alpha()
-
-        piece_images_dict = {
-            chess.BLACK|chess.KING: b_k, chess.BLACK|chess.QUEEN: b_q,
-            chess.BLACK|chess.ROOK: b_r, chess.BLACK|chess.BISHOP: b_b,
-            chess.BLACK|chess.KNIGHT: b_n, chess.BLACK|chess.PAWN: b_p,
-            chess.WHITE|chess.KING: w_k, chess.WHITE|chess.QUEEN: w_q,
-            chess.WHITE|chess.ROOK: w_r, chess.WHITE|chess.BISHOP: w_b,
-            chess.WHITE|chess.KNIGHT: w_n, chess.WHITE|chess.PAWN: w_p,
+        piece_images = {
+            chess.BLACK|chess.KING:   pygame.image.load('images/black_king.png').convert_alpha(), chess.BLACK|chess.QUEEN:  pygame.image.load('images/black_queen.png').convert_alpha(),
+            chess.BLACK|chess.ROOK:   pygame.image.load('images/black_rook.png').convert_alpha(), chess.BLACK|chess.BISHOP: pygame.image.load('images/black_bishop.png').convert_alpha(),
+            chess.BLACK|chess.KNIGHT: pygame.image.load('images/black_knight.png').convert_alpha(), chess.BLACK|chess.PAWN:   pygame.image.load('images/black_pawn.png').convert_alpha(),
+            chess.WHITE|chess.KING:   pygame.image.load('images/white_king.png').convert_alpha(), chess.WHITE|chess.QUEEN:  pygame.image.load('images/white_queen.png').convert_alpha(),
+            chess.WHITE|chess.ROOK:   pygame.image.load('images/white_rook.png').convert_alpha(), chess.WHITE|chess.BISHOP: pygame.image.load('images/white_bishop.png').convert_alpha(),
+            chess.WHITE|chess.KNIGHT: pygame.image.load('images/white_knight.png').convert_alpha(), chess.WHITE|chess.PAWN:   pygame.image.load('images/white_pawn.png').convert_alpha(),
         }
-    except pygame.error as e:
-        print(f"Error loading images: {e}")
-        pygame.quit()
-        sys.exit()
+    except pygame.error as e: print(f"Error loading images: {e}"); pygame.quit(); sys.exit()
 
     player_id = str(uuid.uuid4())
-    game_id = None
-    game = chess.Game()
-    my_color_str = None
-    my_color = None
-    is_my_turn = False
-    is_waiting_for_opponent = False
-    game_is_over = False
-    status_text = "Menghubungkan..."
-
-    POLL_EVENT = pygame.USEREVENT + 1
+    game_state = {'game_id':None,'my_color':None,'is_my_turn':False,'game_over':False,'is_waiting':False,'status':"Connecting...",'game_over_msg':"",'game_over_time':None}
+    game = chess.Game(); dragged_piece = {'image':None,'rect':None,'leaving_square':None}; highlighted_squares = []
     
-    is_dragging = False
-    highlighted_squares = []
-    dragged_piece_info = {'image': None, 'rect': None, 'leaving_square': None}
-
-    try:
-        res = requests.get(f"{SERVER_URL}/api/join_game?player_id={player_id}")
-        data = res.json()
-        game_id = data['game_id']
-        my_color_str = data['color']
-        my_color = chess.WHITE if my_color_str == 'white' else chess.BLACK
-        if data['status'] == 'waiting':
-            is_waiting_for_opponent = True
-            pygame.time.set_timer(POLL_EVENT, 2000)
-        else:
-            game.load_FEN(data['fen'])
-            is_my_turn = (my_color == game.to_move)
-            if not is_my_turn:
-                pygame.time.set_timer(POLL_EVENT, 2000)
-    except requests.exceptions.RequestException:
-        status_text = "Failed to connect to server"
+    requests_q = queue.Queue(); results_q = queue.Queue(); stop_event = threading.Event()
+    net_thread = threading.Thread(target=network_thread_func, args=(requests_q, results_q, stop_event), daemon=True); net_thread.start()
+    requests_q.put({'action': 'join', 'player_id': player_id})
 
     running = True
     while running:
-        if not game_is_over:
-            if is_waiting_for_opponent:
-                status_text = "Waiting for opponent..."
-            elif game_id:
-                if is_my_turn:
-                    status_text = "Your Turn"
+        try:
+            result = results_q.get_nowait()
+            res_type, data = result.get('type'), result.get('data')
+            def handle_game_over(outcome_message):
+                if not game_state['game_over']: game_state.update({'game_over':True,'game_over_msg':outcome_message,'game_over_time':time.time()})
+            if res_type == 'error': handle_game_over(f"Network Error: {type(data).__name__}")
+            elif res_type == 'join_result':
+                game_state.update({'game_id':data['game_id'],'my_color':chess.WHITE if data['color']=='white' else chess.BLACK})
+                if data['status'] == 'waiting':
+                    game_state.update({'is_waiting':True,'status':"Waiting for opponent..."}); requests_q.put({'action':'poll','game_id':game_state['game_id'], 'player_id':player_id})
                 else:
-                    status_text = "Opponent's Turn"
-                if chess.is_check(game.board, my_color):
-                     status_text += " - Check!"
-        pygame.display.set_caption(f"{APP_TITLE} - {status_text}")
+                    game.load_FEN(data['fen']); game_state['is_my_turn'] = (game_state['my_color'] == game.to_move)
+                    if not game_state['is_my_turn']: requests_q.put({'action':'poll','game_id':game_state['game_id'],'fen':game.to_FEN(), 'player_id':player_id})
+            elif res_type in ['poll_result', 'move_result']:
+                if data.get('fen') and data['fen'] != game.to_FEN(): game.load_FEN(data['fen'])
+                game_state.update({'is_waiting':False,'is_my_turn':(game_state['my_color'] == game.to_move)})
+                if data.get('outcome'): handle_game_over(data['outcome'])
+                elif not game_state['is_my_turn'] and not game_state['game_over']: requests_q.put({'action':'poll','game_id':game_state['game_id'],'fen':game.to_FEN(), 'player_id':player_id})
+        except queue.Empty: pass
 
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-
-            if event.type == POLL_EVENT and not game_is_over:
-                try:
-                    res = requests.get(f"{SERVER_URL}/api/get_update?game_id={game_id}")
-                    data = res.json()
-                    
-                    if data.get('outcome'):
-                        game_is_over = True
-                        is_my_turn = False
-                        status_text = data['outcome']
-                        pygame.time.set_timer(POLL_EVENT, 0)
-                        game.load_FEN(data['fen'])
-
-                    else:
-                        game_just_started = is_waiting_for_opponent and data.get('status') == 'update'
-                        board_has_changed = data.get('fen') and data.get('fen') != game.to_FEN()
-                        if game_just_started or board_has_changed:
-                            is_waiting_for_opponent = False
-                            game.load_FEN(data['fen'])
-                            is_my_turn = (my_color_str == data.get('turn'))
-                            if is_my_turn:
-                                pygame.time.set_timer(POLL_EVENT, 0)
-                except requests.exceptions.RequestException: pass
-
+            if event.type == pygame.QUIT: running = False
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_c:
-                    CURRENT_THEME_INDEX = (CURRENT_THEME_INDEX + 1) % len(BOARD_THEMES)
-                    BOARD_COLOR = BOARD_THEMES[CURRENT_THEME_INDEX][1]
-                    print(f"Tema diubah menjadi: {BOARD_THEMES[CURRENT_THEME_INDEX][0]}")
-
-            if is_my_turn and not game_is_over:
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    clicked_square = coord2str(event.pos, my_color)
-                    if clicked_square:
-                        piece_code = chess.get_piece(game.board, chess.str2bb(clicked_square))
-                        if piece_code != chess.EMPTY and (piece_code & chess.COLOR_MASK) == my_color:
-                            is_dragging = True
-                            dragged_piece_info['leaving_square'] = clicked_square
-                            scaled_img = pygame.transform.scale(piece_images_dict[piece_code], (SQUARE_SIDE, SQUARE_SIDE))
-                            dragged_piece_info['image'] = scaled_img
-                            dragged_piece_info['rect'] = scaled_img.get_rect(center=event.pos)
-                            piece_bb = chess.str2bb(clicked_square)
-                            for move in chess.legal_moves(game, my_color):
-                                if move[0] == piece_bb:
-                                    highlighted_squares.append(chess.bb2str(move[1]))
-                
-                elif event.type == pygame.MOUSEMOTION and is_dragging:
-                    dragged_piece_info['rect'].center = event.pos
-
-                elif event.type == pygame.MOUSEBUTTONUP and is_dragging:
-                    is_dragging = False
-                    arriving_square = coord2str(event.pos, my_color)
-                    if arriving_square and arriving_square in highlighted_squares:
-                        move_str = dragged_piece_info['leaving_square'] + arriving_square
-                        is_my_turn = False
-                        try:
-                            res = requests.get(f"{SERVER_URL}/api/move?game_id={game_id}&player_id={player_id}&move={move_str}")
-                            data = res.json()
-                            game.load_FEN(data['fen'])
-                            
-                            if data.get('outcome'):
-                                game_is_over = True
-                                is_my_turn = False
-                                status_text = data['outcome']
-                                pygame.time.set_timer(POLL_EVENT, 0)
-                            else:
-                                is_my_turn = (my_color_str == data.get('turn'))
-                                if not is_my_turn:
-                                    pygame.time.set_timer(POLL_EVENT, 2000)
-                        except requests.exceptions.RequestException:
-                            is_my_turn = True
-                    highlighted_squares = []
-                    dragged_piece_info = {'image': None, 'rect': None, 'leaving_square': None}
-
+                    CURRENT_THEME_INDEX = (CURRENT_THEME_INDEX + 1) % len(BOARD_THEMES); BOARD_COLOR = BOARD_THEMES[CURRENT_THEME_INDEX][1]
+                    print(f"Theme changed to: {BOARD_THEMES[CURRENT_THEME_INDEX][0]}")
+            if game_state['is_my_turn'] and not game_state['game_over']:
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button==1:
+                    sq = coord2str(event.pos, game_state['my_color'])
+                    if sq:
+                        p = chess.get_piece(game.board, chess.str2bb(sq));
+                        if p!=chess.EMPTY and (p&chess.COLOR_MASK)==game_state['my_color']:
+                            dragged_piece.update({'leaving_square':sq,'image':pygame.transform.scale(piece_images[p],(SQUARE_SIDE,SQUARE_SIDE))})
+                            dragged_piece['rect'] = dragged_piece['image'].get_rect(center=event.pos)
+                            for move in chess.legal_moves(game, game_state['my_color']):
+                                if move[0] == chess.str2bb(sq): highlighted_squares.append(chess.bb2str(move[1]))
+                elif event.type == pygame.MOUSEMOTION and dragged_piece['image']: dragged_piece['rect'].center=event.pos
+                elif event.type == pygame.MOUSEBUTTONUP and event.button==1 and dragged_piece['leaving_square']:
+                    arr_sq = coord2str(event.pos, game_state['my_color'])
+                    if arr_sq and arr_sq in highlighted_squares:
+                        game_state['is_my_turn']=False; requests_q.put({'action':'move','game_id':game_state['game_id'],'player_id':player_id,'move':dragged_piece['leaving_square']+arr_sq})
+                    dragged_piece={'image':None,'rect':None,'leaving_square':None}; highlighted_squares=[]
             if event.type == pygame.VIDEORESIZE:
-                new_size = min(event.w, event.h)
-                SQUARE_SIDE = new_size // 8
-                screen = pygame.display.set_mode((8 * SQUARE_SIDE, 8 * SQUARE_SIDE), pygame.RESIZABLE)
-
-        draw_game_state(screen, game, my_color, highlighted_squares, dragged_piece_info, piece_images_dict)
+                SQUARE_SIDE = min(event.w,event.h)//8; screen=pygame.display.set_mode((8*SQUARE_SIDE,8*SQUARE_SIDE),pygame.RESIZABLE)
+        
+        status_to_display = game_state['status']
+        if game_state['game_over']:
+            remaining = 10 - (time.time() - game_state['game_over_time'])
+            if remaining <= 0: running = False
+            status_to_display = f"{game_state['game_over_msg']} Closing in {max(0, int(remaining))+1}s..."
+        else:
+            if not game_state['is_waiting'] and game_state['game_id']:
+                status_to_display = "Your Turn" if game_state['is_my_turn'] else "Opponent's Turn"
+                if game_state['my_color'] is not None and chess.is_check(game.board, game_state['my_color']): status_to_display += " - Check!"
+        
+        pygame.display.set_caption(f"{APP_TITLE} - {status_to_display}")
+        draw_game_state(screen, game, game_state['my_color'], highlighted_squares, dragged_piece, piece_images)
+        if game_state['game_over']: draw_game_over_overlay(screen, status_to_display)
+        
+        pygame.display.flip()
         clock.tick(60)
 
-    pygame.quit()
-    sys.exit()
+    stop_event.set(); net_thread.join(); pygame.quit(); sys.exit()
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     play_game()
