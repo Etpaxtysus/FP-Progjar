@@ -22,6 +22,7 @@ BOARD_THEMES = [
 CURRENT_THEME_INDEX = 0
 BOARD_COLOR = BOARD_THEMES[CURRENT_THEME_INDEX][1]
 HIGHLIGHT_MOVE_COLOR, HIGHLIGHT_CAPTURE_COLOR = (20, 80, 120, 100), (170, 0, 0, 120)
+RED_CHECK_HIGHLIGHT = (220, 50, 50, 100)
 
 def get_display_indices(f_idx, r_idx, pov): return (f_idx, 7 - r_idx) if pov == chess.WHITE else (7 - f_idx, r_idx)
 def coord2str(pos, pov):
@@ -36,6 +37,19 @@ def draw_game_state(s, g, pov, h_sq, d_p, p_img):
         for f_idx in range(8):
             if (r_idx + f_idx) % 2 == 0:
                 dc,dr = get_display_indices(f_idx,r_idx,pov); pygame.draw.rect(s,BOARD_COLOR['dark'],(dc*SQUARE_SIDE,dr*SQUARE_SIDE,SQUARE_SIDE,SQUARE_SIDE))
+    
+    if g and g.board:
+        for color in [chess.WHITE, chess.BLACK]:
+            if chess.is_check(g.board, color):
+                king_pos_bb = chess.get_king(g.board, color)
+                if king_pos_bb:
+                    king_sq_str = chess.bb2str(king_pos_bb)
+                    f, r = chess.FILES.index(king_sq_str[0]), chess.RANKS.index(king_sq_str[1])
+                    dc, dr = get_display_indices(f, r, pov)
+                    check_surface = pygame.Surface((SQUARE_SIDE, SQUARE_SIDE), pygame.SRCALPHA)
+                    check_surface.fill(RED_CHECK_HIGHLIGHT)
+                    s.blit(check_surface, (dc * SQUARE_SIDE, dr * SQUARE_SIDE))
+
     for sq in h_sq: paint_highlight(s, sq, HIGHLIGHT_CAPTURE_COLOR if chess.get_piece(g.board,chess.str2bb(sq))!=chess.EMPTY else HIGHLIGHT_MOVE_COLOR, pov)
     b_draw = list(g.board);
     if d_p and d_p['leaving_square']: b_draw[chess.str2index(d_p['leaving_square'])]=chess.EMPTY
@@ -69,13 +83,28 @@ def play_game():
     global SQUARE_SIDE, BOARD_COLOR, CURRENT_THEME_INDEX
     screen = pygame.display.set_mode((8 * SQUARE_SIDE, 8 * SQUARE_SIDE), pygame.RESIZABLE); pygame.display.set_caption(APP_TITLE); clock = pygame.time.Clock()
     try:
+        b_k = pygame.image.load('images/black_king.png').convert_alpha()
+        b_q = pygame.image.load('images/black_queen.png').convert_alpha()
+        b_r = pygame.image.load('images/black_rook.png').convert_alpha()
+        b_b = pygame.image.load('images/black_bishop.png').convert_alpha()
+        b_n = pygame.image.load('images/black_knight.png').convert_alpha()
+        b_p = pygame.image.load('images/black_pawn.png').convert_alpha()
+        w_k = pygame.image.load('images/white_king.png').convert_alpha()
+        w_q = pygame.image.load('images/white_queen.png').convert_alpha()
+        w_r = pygame.image.load('images/white_rook.png').convert_alpha()
+        w_b = pygame.image.load('images/white_bishop.png').convert_alpha()
+        w_n = pygame.image.load('images/white_knight.png').convert_alpha()
+        w_p = pygame.image.load('images/white_pawn.png').convert_alpha()
+        
+        pygame.display.set_icon(w_k)
+
         piece_images = {
-            chess.BLACK|chess.KING:   pygame.image.load('images/black_king.png').convert_alpha(), chess.BLACK|chess.QUEEN:  pygame.image.load('images/black_queen.png').convert_alpha(),
-            chess.BLACK|chess.ROOK:   pygame.image.load('images/black_rook.png').convert_alpha(), chess.BLACK|chess.BISHOP: pygame.image.load('images/black_bishop.png').convert_alpha(),
-            chess.BLACK|chess.KNIGHT: pygame.image.load('images/black_knight.png').convert_alpha(), chess.BLACK|chess.PAWN:   pygame.image.load('images/black_pawn.png').convert_alpha(),
-            chess.WHITE|chess.KING:   pygame.image.load('images/white_king.png').convert_alpha(), chess.WHITE|chess.QUEEN:  pygame.image.load('images/white_queen.png').convert_alpha(),
-            chess.WHITE|chess.ROOK:   pygame.image.load('images/white_rook.png').convert_alpha(), chess.WHITE|chess.BISHOP: pygame.image.load('images/white_bishop.png').convert_alpha(),
-            chess.WHITE|chess.KNIGHT: pygame.image.load('images/white_knight.png').convert_alpha(), chess.WHITE|chess.PAWN:   pygame.image.load('images/white_pawn.png').convert_alpha(),
+            chess.BLACK|chess.KING:   b_k, chess.BLACK|chess.QUEEN:  b_q,
+            chess.BLACK|chess.ROOK:   b_r, chess.BLACK|chess.BISHOP: b_b,
+            chess.BLACK|chess.KNIGHT: b_n, chess.BLACK|chess.PAWN:   b_p,
+            chess.WHITE|chess.KING:   w_k, chess.WHITE|chess.QUEEN:  w_q,
+            chess.WHITE|chess.ROOK:   w_r, chess.WHITE|chess.BISHOP: w_b,
+            chess.WHITE|chess.KNIGHT: w_n, chess.WHITE|chess.PAWN:   w_p,
         }
     except pygame.error as e: print(f"Error loading images: {e}"); pygame.quit(); sys.exit()
 
@@ -103,7 +132,7 @@ def play_game():
                     game.load_FEN(data['fen']); game_state['is_my_turn'] = (game_state['my_color'] == game.to_move)
                     if not game_state['is_my_turn']: requests_q.put({'action':'poll','game_id':game_state['game_id'],'fen':game.to_FEN(), 'player_id':player_id})
             elif res_type in ['poll_result', 'move_result']:
-                if data.get('fen') and data['fen'] != game.to_FEN(): game.load_FEN(data['fen'])
+                if data.get('fen') and data.get('fen') != game.to_FEN(): game.load_FEN(data['fen'])
                 game_state.update({'is_waiting':False,'is_my_turn':(game_state['my_color'] == game.to_move)})
                 if data.get('outcome'): handle_game_over(data['outcome'])
                 elif not game_state['is_my_turn'] and not game_state['game_over']: requests_q.put({'action':'poll','game_id':game_state['game_id'],'fen':game.to_FEN(), 'player_id':player_id})
